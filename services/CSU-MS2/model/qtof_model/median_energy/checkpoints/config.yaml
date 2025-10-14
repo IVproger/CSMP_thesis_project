@@ -1,5 +1,5 @@
-batch_size: 800
-epochs: 4000
+batch_size: 64
+epochs: 100
 eval_every_n_epochs: 5
 smilesmodel_finetune: False
 smilesmodel_finetune_path: "/public/home/hpc212307003/molclr_cnn/nist_w2v/pretrained_gin/checkpoints/model.pth"

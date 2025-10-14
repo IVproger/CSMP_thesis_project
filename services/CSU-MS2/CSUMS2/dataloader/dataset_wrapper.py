@@ -340,3 +340,104 @@ class DataSetWrapper_noddp(object):
         return train_loader, valid_loader
 
 
+def process_dataframe_to_spectra(df):
+    """
+    Convert DataFrame with peaks_json to matchms Spectrum objects
+    """
+    from matchms import Spectrum
+    import json
+    
+    spectra = []
+    valid_indices = []
+    
+    for idx, row in df.iterrows():
+        try:
+            # Parse peaks_json to get mz and intensity arrays
+            peaks_data = json.loads(row['peaks_json'])
+            mz = np.array([peak[0] for peak in peaks_data])
+            intensities = np.array([peak[1] for peak in peaks_data])
+            
+            # Create spectrum object with metadata
+            metadata = {
+                'precursor_mz': row['precursor_mz'],
+                'adduct': row['adduct'],
+                # 'ion_mode': row['ion_mode'],
+                'molecular_formula': row['molecular_formula'],
+                'instrument': row['instrument'],
+                # 'ion_source': row['ion_source'],
+                # 'compound_source': row['compound_source'],
+                'inchikey': row['inchikey']
+            }
+            
+            spectrum = Spectrum(mz=mz, intensities=intensities, metadata=metadata)
+            spectra.append(spectrum)
+            valid_indices.append(idx)
+            
+        except Exception as e:
+            print(f"Error processing row {idx}: {e}")
+            continue
+    
+    return spectra, valid_indices
+
+def dataframe_to_files(df, output_dir="./temp_data"):
+    """
+    Convert DataFrame to temporary files compatible with existing DataSetWrapper
+    """
+    import os
+    from matchms.exporting import save_as_mgf
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Process DataFrame to get spectra and valid indices
+    spectra, valid_indices = process_dataframe_to_spectra(df)
+    
+    print(f"Processed {len(spectra)} valid spectra out of {len(df)} total entries.")
+    
+    # Filter valid rows
+    valid_df = df.iloc[valid_indices].reset_index(drop=True)
+    smiles_list = valid_df['smiles'].tolist()
+    
+    # Save SMILES as numpy array
+    smi_file = os.path.join(output_dir, "smiles.npy")
+    np.save(smi_file, np.array(smiles_list))
+    
+    # Save spectra as MGF file
+    mgf_file = os.path.join(output_dir, "spectra.mgf")
+    save_as_mgf(spectra, mgf_file)
+    
+    return smi_file, mgf_file, valid_df
+
+def create_wrapper_from_dataframe(df, batch_size=32, num_workers=4, valid_size=0.2, 
+                                 use_ddp=False, world_size=1, rank=0, output_dir="./temp_data"):
+    """
+    Create DataSetWrapper from DataFrame
+    """
+    # Convert DataFrame to compatible files
+    print("Convert DataFrame to compatible files")
+    smi_file, mgf_file, processed_df = dataframe_to_files(df, output_dir)
+    
+    # Create appropriate wrapper
+    print("Create data wrapper")
+    if use_ddp:
+        wrapper = DataSetWrapper(
+            world_size=world_size,
+            rank=rank,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            valid_size=valid_size,
+            s=None,  # Not used in current implementation
+            ms2_file=mgf_file,
+            smi_file=smi_file
+        )
+    else:
+        wrapper = DataSetWrapper_noddp(
+            batch_size=batch_size,
+            num_workers=num_workers,
+            valid_size=valid_size,
+            s=None,  # Not used in current implementation
+            ms2_file=mgf_file,
+            smi_file=smi_file
+        )
+    
+    return wrapper, processed_df

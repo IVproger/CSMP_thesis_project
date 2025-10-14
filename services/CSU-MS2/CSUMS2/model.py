@@ -6,7 +6,8 @@ import numpy as np
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import add_self_loops
 from torch_geometric.nn import global_add_pool, global_mean_pool, global_max_pool
-from . import nn_utils
+from nn_utils import nn_utils
+from nn_utils.transformer_layers import TransformerEncoderLayer
 num_atom_type = 119 # including the extra mask tokens
 num_chirality_tag = 4
 num_hybrid_type = 8
@@ -167,7 +168,7 @@ class MSModel(nn.Module):
         super(MSModel,self).__init__()
         self.mz_embedder = FourierEmbedder(spec_embed_dim)
         self.input_compress = nn.Linear(spec_embed_dim+1, spec_embed_dim)
-        peak_attn_layer = nn_utils.TransformerEncoderLayer(
+        peak_attn_layer = TransformerEncoderLayer(
            d_model=spec_embed_dim,
            nhead=8,
            dim_feedforward=spec_embed_dim * 4,
