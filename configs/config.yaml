@@ -1,11 +1,11 @@
 batch_size: 256
-epochs: 10
-eval_every_n_epochs: 2
+epochs: 100
+eval_every_n_epochs: 5
 # smilesmodel_finetune: True | False
 # smilesmodel_finetune_path: path_to_model_checkpoint
 # fine_tune_from: path_to_silico_data
-log_every_n_steps: 2
-learning_rate: 1e-06
+log_every_n_steps: 10
+learning_rate: 1e-05
 weight_decay: 0.0001
 valid_size: 0.2
 fp16_precision: True
@@ -20,7 +20,7 @@ model_config:
   num_layer: 5 # number of layers for SMILES encoder
   layers: 5 # number of layers for MS transformer 
 
-  drop_ratio: 0.1  # For SMILES model
+  drop_ratio: 0.3  # For SMILES model
   dropout: 0.1 # For MS model
 
   pool : mean
