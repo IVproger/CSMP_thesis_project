@@ -241,34 +241,109 @@ class DataSetWrapper(object):
         self.ms2_file = ms2_file
         self.smi_file = smi_file
 
-    def get_data_loaders(self):
+    # def get_data_loaders(self):
+    #     self.smiles = np.load(self.smi_file).tolist()
+    #     self.ms2 = list(load_from_mgf(self.ms2_file))
+
+    #     # obtain training indices that will be used for validation
+    #     num_train = len(self.smiles)
+    #     indices = list(range(num_train))
+    #     np.random.shuffle(indices)
+
+    #     split = int(np.floor(self.valid_size * num_train))
+    #     train_idx, valid_idx = indices[split:], indices[:split]
+    #     self.train_smiles = [self.smiles[i] for i in train_idx]
+    #     self.train_ms2 = [self.ms2[i] for i in train_idx]
+    #     self.valid_smiles = [self.smiles[i] for i in valid_idx]
+    #     self.valid_ms2 = [self.ms2[i] for i in valid_idx]
+    #     self.train_graph_file = graph_spec2vec_calculation(self.train_smiles,self.train_ms2)
+    #     self.valid_graph_file = graph_spec2vec_calculation(self.valid_smiles,self.valid_ms2)
+    #     train_dataset = ClrDataset(self.train_graph_file,self.train_graph_file.index.values)
+    #     valid_dataset = ClrDataset(self.valid_graph_file,self.valid_graph_file.index.values)
+
+    #     train_loader, valid_loader = self.get_train_validation_data_loaders(train_dataset,valid_dataset)
+    #     return train_loader, valid_loader
+    def get_data_loaders_molecule_split(self):
+        """
+        Split data by unique molecules to prevent data leakage
+        """
         self.smiles = np.load(self.smi_file).tolist()
         self.ms2 = list(load_from_mgf(self.ms2_file))
-
-        # obtain training indices that will be used for validation
         
-        num_train = len(self.smiles)
-        indices = list(range(num_train))
+        # Create a DataFrame to work with molecule-spectrum pairs
+        data_pairs = []
+        for i, (smile, spectrum) in enumerate(zip(self.smiles, self.ms2)):
+            # Use InChI key if available, otherwise use SMILES as molecule identifier
+            molecule_id = getattr(spectrum.metadata, 'inchikey', smile) if hasattr(spectrum, 'metadata') else smile
+            data_pairs.append({
+                'index': i,
+                'smiles': smile,
+                'spectrum': spectrum,
+                'molecule_id': molecule_id
+            })
+        
+        df_pairs = pd.DataFrame(data_pairs)
+        
+        # Get unique molecules
+        unique_molecules = df_pairs['molecule_id'].unique()
+        print(f"Total spectra: {len(df_pairs)}")
+        print(f"Unique molecules: {len(unique_molecules)}")
+        
+        # Split by molecules, not by spectra
+        num_molecules = len(unique_molecules)
+        np.random.seed(42)  # For reproducibility
+        indices = list(range(num_molecules))
         np.random.shuffle(indices)
+        
+        split = int(np.floor(self.valid_size * num_molecules))
+        train_mol_idx, valid_mol_idx = indices[split:], indices[:split]
+        
+        train_molecules = unique_molecules[train_mol_idx]
+        valid_molecules = unique_molecules[valid_mol_idx]
+        
+        # Get all spectra for training and validation molecules
+        train_mask = df_pairs['molecule_id'].isin(train_molecules)
+        valid_mask = df_pairs['molecule_id'].isin(valid_molecules)
+        
+        train_indices = df_pairs[train_mask]['index'].tolist()
+        valid_indices = df_pairs[valid_mask]['index'].tolist()
+        
+        print(f"Training spectra: {len(train_indices)} from {len(train_molecules)} molecules")
+        print(f"Validation spectra: {len(valid_indices)} from {len(valid_molecules)} molecules")
+        
+        # Create training and validation data
+        self.train_smiles = [self.smiles[i] for i in train_indices]
+        self.train_ms2 = [self.ms2[i] for i in train_indices]
+        self.valid_smiles = [self.smiles[i] for i in valid_indices]
+        self.valid_ms2 = [self.ms2[i] for i in valid_indices]
+        
+        # Verify no molecule overlap
+        train_mol_set = set(df_pairs[train_mask]['molecule_id'].unique())
+        valid_mol_set = set(df_pairs[valid_mask]['molecule_id'].unique())
+        overlap = train_mol_set.intersection(valid_mol_set)
+        
+        if overlap:
+            print(f"WARNING: {len(overlap)} molecules overlap between train and validation!")
+        else:
+            print("✓ No molecule overlap between train and validation sets")
+        
+        # Continue with graph calculation
+        self.train_graph_file = graph_spec2vec_calculation(self.train_smiles, self.train_ms2)
+        self.valid_graph_file = graph_spec2vec_calculation(self.valid_smiles, self.valid_ms2)
+        
+        train_dataset = ClrDataset(self.train_graph_file, self.train_graph_file.index.values)
+        valid_dataset = ClrDataset(self.valid_graph_file, self.valid_graph_file.index.values)
 
-        split = int(np.floor(self.valid_size * num_train))
-        train_idx, valid_idx = indices[split:], indices[:split]
-        self.train_smiles = [self.smiles[i] for i in train_idx]
-        self.train_ms2 = [self.ms2[i] for i in train_idx]
-        self.valid_smiles = [self.smiles[i] for i in valid_idx]
-        self.valid_ms2 = [self.ms2[i] for i in valid_idx]
-        self.train_graph_file = graph_spec2vec_calculation(self.train_smiles,self.train_ms2)
-        self.valid_graph_file = graph_spec2vec_calculation(self.valid_smiles,self.valid_ms2)
-        train_dataset = ClrDataset(self.train_graph_file,self.train_graph_file.index.values)
-        valid_dataset = ClrDataset(self.valid_graph_file,self.valid_graph_file.index.values)
-
-        train_loader, valid_loader = self.get_train_validation_data_loaders(train_dataset,valid_dataset)
+        train_loader, valid_loader = self.get_train_validation_data_loaders(train_dataset, valid_dataset)
         return train_loader, valid_loader
+
+    def get_data_loaders(self):
+        return self.get_data_loaders_molecule_split()
 
     def get_train_validation_data_loaders(self, train_dataset,valid_dataset):
         train_sampler = DistributedSampler(train_dataset, num_replicas = self.world_size, rank=self.rank, shuffle = True)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, 
-                                                   sampler=train_sampler,shuffle=False,collate_fn = collate_func)
+                                                   sampler=train_sampler,shuffle=True,collate_fn = collate_func)
         valid_sampler = DistributedSampler(valid_dataset, num_replicas = self.world_size, rank=self.rank, shuffle = False)
         valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=self.batch_size, 
                                                    sampler=valid_sampler,shuffle=False,collate_fn = collate_func)
@@ -297,36 +372,112 @@ class DataSetWrapper_noddp(object):
         self.smi_file = smi_file
 
     
-    def get_data_loaders(self):
+    # def get_data_loaders(self):
+    #     self.smiles = np.load(self.smi_file).tolist()
+    #     self.ms2 = list(load_from_mgf(self.ms2_file))
+
+    #     # obtain training indices that will be used for validation
+        
+    #     num_train = len(self.smiles)
+    #     indices = list(range(num_train))
+    #     np.random.shuffle(indices)
+
+    #     split = int(np.floor(self.valid_size * num_train))
+    #     train_idx, valid_idx = indices[split:], indices[:split]
+    #     self.train_smiles = [self.smiles[i] for i in train_idx]
+    #     self.train_ms2 = [self.ms2[i] for i in train_idx]
+    #     self.valid_smiles = [self.smiles[i] for i in valid_idx]
+    #     self.valid_ms2 = [self.ms2[i] for i in valid_idx]
+    #     self.train_graph_file = graph_spec2vec_calculation(self.train_smiles,self.train_ms2)
+    #     self.valid_graph_file = graph_spec2vec_calculation(self.valid_smiles,self.valid_ms2)
+    #     train_dataset = ClrDataset(self.train_graph_file,self.train_graph_file.index.values)
+    #     valid_dataset = ClrDataset(self.valid_graph_file,self.valid_graph_file.index.values)
+
+    #     train_loader, valid_loader = self.get_train_validation_data_loaders(train_dataset,valid_dataset)
+    #     return train_loader, valid_loader
+    def get_data_loaders_molecule_split(self):
+        """
+        Split data by unique molecules to prevent data leakage
+        """
         self.smiles = np.load(self.smi_file).tolist()
         self.ms2 = list(load_from_mgf(self.ms2_file))
-
-        # obtain training indices that will be used for validation
         
-        num_train = len(self.smiles)
-        indices = list(range(num_train))
+        # Create a DataFrame to work with molecule-spectrum pairs
+        data_pairs = []
+        for i, (smile, spectrum) in enumerate(zip(self.smiles, self.ms2)):
+            # Use InChI key if available, otherwise use SMILES as molecule identifier
+            molecule_id = getattr(spectrum.metadata, 'inchikey', smile) if hasattr(spectrum, 'metadata') else smile
+            data_pairs.append({
+                'index': i,
+                'smiles': smile,
+                'spectrum': spectrum,
+                'molecule_id': molecule_id
+            })
+        
+        df_pairs = pd.DataFrame(data_pairs)
+        
+        # Get unique molecules
+        unique_molecules = df_pairs['molecule_id'].unique()
+        print(f"Total spectra: {len(df_pairs)}")
+        print(f"Unique molecules: {len(unique_molecules)}")
+        
+        # Split by molecules, not by spectra
+        num_molecules = len(unique_molecules)
+        np.random.seed(42)  # For reproducibility
+        indices = list(range(num_molecules))
         np.random.shuffle(indices)
+        
+        split = int(np.floor(self.valid_size * num_molecules))
+        train_mol_idx, valid_mol_idx = indices[split:], indices[:split]
+        
+        train_molecules = unique_molecules[train_mol_idx]
+        valid_molecules = unique_molecules[valid_mol_idx]
+        
+        # Get all spectra for training and validation molecules
+        train_mask = df_pairs['molecule_id'].isin(train_molecules)
+        valid_mask = df_pairs['molecule_id'].isin(valid_molecules)
+        
+        train_indices = df_pairs[train_mask]['index'].tolist()
+        valid_indices = df_pairs[valid_mask]['index'].tolist()
+        
+        print(f"Training spectra: {len(train_indices)} from {len(train_molecules)} molecules")
+        print(f"Validation spectra: {len(valid_indices)} from {len(valid_molecules)} molecules")
+        
+        # Create training and validation data
+        self.train_smiles = [self.smiles[i] for i in train_indices]
+        self.train_ms2 = [self.ms2[i] for i in train_indices]
+        self.valid_smiles = [self.smiles[i] for i in valid_indices]
+        self.valid_ms2 = [self.ms2[i] for i in valid_indices]
+        
+        # Verify no molecule overlap
+        train_mol_set = set(df_pairs[train_mask]['molecule_id'].unique())
+        valid_mol_set = set(df_pairs[valid_mask]['molecule_id'].unique())
+        overlap = train_mol_set.intersection(valid_mol_set)
+        
+        if overlap:
+            print(f"WARNING: {len(overlap)} molecules overlap between train and validation!")
+        else:
+            print("✓ No molecule overlap between train and validation sets")
+        
+        # Continue with graph calculation
+        self.train_graph_file = graph_spec2vec_calculation(self.train_smiles, self.train_ms2)
+        self.valid_graph_file = graph_spec2vec_calculation(self.valid_smiles, self.valid_ms2)
+        
+        train_dataset = ClrDataset(self.train_graph_file, self.train_graph_file.index.values)
+        valid_dataset = ClrDataset(self.valid_graph_file, self.valid_graph_file.index.values)
 
-        split = int(np.floor(self.valid_size * num_train))
-        train_idx, valid_idx = indices[split:], indices[:split]
-        self.train_smiles = [self.smiles[i] for i in train_idx]
-        self.train_ms2 = [self.ms2[i] for i in train_idx]
-        self.valid_smiles = [self.smiles[i] for i in valid_idx]
-        self.valid_ms2 = [self.ms2[i] for i in valid_idx]
-        self.train_graph_file = graph_spec2vec_calculation(self.train_smiles,self.train_ms2)
-        self.valid_graph_file = graph_spec2vec_calculation(self.valid_smiles,self.valid_ms2)
-        train_dataset = ClrDataset(self.train_graph_file,self.train_graph_file.index.values)
-        valid_dataset = ClrDataset(self.valid_graph_file,self.valid_graph_file.index.values)
-
-        train_loader, valid_loader = self.get_train_validation_data_loaders(train_dataset,valid_dataset)
+        train_loader, valid_loader = self.get_train_validation_data_loaders(train_dataset, valid_dataset)
         return train_loader, valid_loader
+    
+    def get_data_loaders(self):
+        return self.get_data_loaders_molecule_split()
 
     def get_train_validation_data_loaders(self, train_dataset,valid_dataset):
         train_loader =torch.utils.data.DataLoader(
                     train_dataset,
                     batch_size=self.batch_size,
                     num_workers=self.num_workers,
-                    shuffle=False,
+                    shuffle=True,
                     collate_fn=collate_func,
                     drop_last=True
                 )

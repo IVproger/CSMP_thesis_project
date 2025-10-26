@@ -6,10 +6,11 @@ eval_every_n_epochs: 5
 # fine_tune_from: path_to_silico_data
 log_every_n_steps: 10
 learning_rate: 1e-05
-weight_decay: 0.0001
+weight_decay: 1e-6
 valid_size: 0.2
 fp16_precision: True
 truncation: True
+sample_size: 10000
 
 model_config:
   emb_dim: 256 # embeddings for smiles 
@@ -26,6 +27,6 @@ model_config:
   pool : mean
   
 loss:
-  temperature: 0.1
+  temperature: 0.3
   use_cosine_similarity: True
   alpha_weight: 0.75
