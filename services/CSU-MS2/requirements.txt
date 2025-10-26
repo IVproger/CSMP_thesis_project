@@ -73,3 +73,4 @@ yarl==1.9.4
 zipp==3.18.1
 clearml==2.0.2
 python-dotenv==1.0.1
+nbconvert==7.16.6

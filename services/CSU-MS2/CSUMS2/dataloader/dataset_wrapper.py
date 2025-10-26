@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 import torch
 from tqdm import tqdm
 #from torch.utils.data import DataLoader
@@ -409,13 +410,28 @@ def dataframe_to_files(df, output_dir="./temp_data"):
     return smi_file, mgf_file, valid_df
 
 def create_wrapper_from_dataframe(df, batch_size=32, num_workers=4, valid_size=0.2, 
-                                 use_ddp=False, world_size=1, rank=0, output_dir="./temp_data"):
+                                 use_ddp=False, world_size=1, rank=0, output_dir="./temp_data", recompute=False):
     """
     Create DataSetWrapper from DataFrame
     """
-    # Convert DataFrame to compatible files
-    print("Convert DataFrame to compatible files")
-    smi_file, mgf_file, processed_df = dataframe_to_files(df, output_dir)
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Define file paths
+    smi_file = os.path.join(output_dir, "smiles.npy")
+    mgf_file = os.path.join(output_dir, "spectra.mgf")
+    
+    # Check if files exist and recompute flag
+    files_exist = (os.path.exists(smi_file) and 
+                   os.path.exists(mgf_file))
+    
+    if recompute or not files_exist:
+        # Convert DataFrame to compatible files
+        print("Converting DataFrame to compatible files...")
+        _, _, _ = dataframe_to_files(df, output_dir)
+    else:
+        print(f"Using existing files from {output_dir}")
     
     # Create appropriate wrapper
     print("Create data wrapper")
@@ -440,4 +456,4 @@ def create_wrapper_from_dataframe(df, batch_size=32, num_workers=4, valid_size=0
             smi_file=smi_file
         )
     
-    return wrapper, processed_df
+    return wrapper
